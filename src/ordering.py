@@ -86,6 +86,7 @@ if __name__ == "__main__":
     import numpy as np
 
     sim = np.load("output/similarity.npy")
+    sim = np.nan_to_num(sim, nan=0.0, posinf=0.0, neginf=0.0)
     order = compute_order(sim, method="spectral+2opt")
     np.save("output/order.npy", order)
     print("[INFO] Saved order to output/order.npy")
