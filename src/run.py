@@ -1,5 +1,4 @@
 import argparse
-import os
 import numpy as np
 from src.extract_frames import extract_frames
 from src.orb_baseline import compute_orb_embeddings
@@ -26,6 +25,7 @@ def run_pipeline(
     # 1. Extract frames
     with Timer("extract_frames"):
         n, video_fps = extract_frames(video_path, frames_out)
+
     # 2. Feature extraction
     if mode == "baseline":
         embeddings_out = embeddings_out or "output/embeddings_orb.npy"
@@ -45,29 +45,54 @@ def run_pipeline(
                 device="cpu",
             )
         sim_method = "cosine"
+
     # 3. Similarity
     with Timer("similarity"):
         build_similarity(embeddings_out, out_path=sim_out, method=sim_method)
+
+    # Load and clean similarity matrix
     sim = np.load(sim_out)
+    sim = np.nan_to_num(sim, nan=0.0, posinf=0.0, neginf=0.0)
+
+    # Normalize similarity matrix to [0, 1] range for spectral methods
+    sim_min, sim_max = sim.min(), sim.max()
+    if sim_max - sim_min > 1e-12:  # Avoid division by zero
+        sim = (sim - sim_min) / (sim_max - sim_min)
+    else:
+        sim = np.ones_like(sim)  # All values are the same
+
+    # Ensure symmetry and non-negativity
+    sim = (sim + sim.T) / 2
+    sim = np.clip(sim, 0, 1)  # Ensure no negative values
+
+    # Save cleaned version back
+    np.save(sim_out, sim)
+
+    print(f"[INFO] Cleaned similarity matrix range: [{sim.min():.6f}, {sim.max():.6f}]")
+
     # 4. Ordering
     with Timer("ordering"):
         order = compute_order(sim, method="spectral+2opt")
         np.save(order_out, order)
+
     # 5. Reconstruct
     with Timer("reconstruct"):
         write_video_from_order(
             frames_out, order_out, out_video=reconstructed_out, fps=fps
         )
+
     # 6. Evaluate (no ground truth by default)
     with Timer("evaluate"):
         metrics = evaluate_reconstruction(reconstructed_out, gt_video=None)
+
     # Save metrics
     import json
+    import os
 
-    Path = os.path
     metrics_path = os.path.join("output", "metrics.json")
     with open(metrics_path, "w") as f:
         json.dump(metrics, f, indent=2)
+
     log_time(f"Pipeline finished. mode={mode}. metrics={metrics}")
     print("[INFO] Pipeline complete. Metrics:", metrics)
     return metrics
